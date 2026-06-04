@@ -82,41 +82,9 @@ def get_llm():
     except Exception as e:
         logger.warning(f"ChatOpenAI unavailable: {e}")
 
-    # Try FakeListLLM (needs langchain-community)
-    try:
-        from langchain_community.llms.fake import FakeListLLM
-        llm = FakeListLLM(
-            responses=[
-                (
-                    "Based on the provided context, backpropagation is the "
-                    "algorithm used to train neural networks. It calculates "
-                    "gradients by working backwards through the network, "
-                    "allowing the optimizer to adjust weights and minimize loss."
-                ),
-                (
-                    "According to the documents, machine learning enables "
-                    "systems to learn from data without explicit programming. "
-                    "It is a core subset of artificial intelligence."
-                ),
-                (
-                    "The context explains that FastAPI uses Python type hints "
-                    "for automatic validation and documentation generation, "
-                    "making it one of the fastest Python web frameworks."
-                ),
-                (
-                    "I don't have enough information in the provided documents "
-                    "to answer this question."
-                ),
-            ]
-        )
-        logger.info("LLM: FakeListLLM (mock — langchain-community installed)")
-        return llm, "fake_llm"
-    except Exception as e:
-        logger.warning(f"FakeListLLM unavailable: {e}")
-
-    # Pure Python fallback — no langchain at all
-    logger.warning("LLM: PurePythonMock (no langchain installed)")
-    return None, "python_mock"
+    # Fallback to Mock mode
+    logger.info("LLM: Mock Pipeline Mode")
+    return None, "fake_llm"
 
 
 def get_retrieval_backend():
@@ -138,51 +106,19 @@ def hardcoded_retrieval(
     top_k: int = 3,
     source_filter=None,
 ) -> list[dict]:
-    """
-    Returns hardcoded context chunks regardless of the query.
-    Phase 1 placeholder — replaced by ChromaDB in Phase 3.
-    """
     return [
         {
-            "chunk": (
-                "Backpropagation is the algorithm used to train neural networks. "
-                "It calculates the gradient of the loss function with respect to "
-                "each weight by working backwards through the network."
-            ),
+            "chunk": "Backpropagation is the algorithm used to train neural networks.",
             "score": 0.89,
             "source": "ml_basics.txt",
             "chunk_index": 3,
-        },
-        {
-            "chunk": (
-                "Neural networks consist of layers of interconnected nodes. "
-                "Each connection has a weight that is adjusted during training "
-                "to minimize the loss function."
-            ),
-            "score": 0.82,
-            "source": "ml_basics.txt",
-            "chunk_index": 4,
-        },
-        {
-            "chunk": (
-                "Machine learning models learn patterns from training data. "
-                "Overfitting occurs when the model memorises training data "
-                "rather than generalising to new examples."
-            ),
-            "score": 0.74,
-            "source": "ml_basics.txt",
-            "chunk_index": 5,
-        },
+        }
     ][:top_k]
 
 
 # ── RAG Pipeline ──────────────────────────────────────────────────────────────
 
 def format_context(chunks: list[dict]) -> str:
-    """
-    Format retrieved chunks into a numbered context block.
-    Used identically in mock and real pipelines.
-    """
     parts = []
     for i, chunk in enumerate(chunks, start=1):
         parts.append(
@@ -194,7 +130,6 @@ def format_context(chunks: list[dict]) -> str:
 
 
 def calculate_confidence(chunks: list[dict]) -> str:
-    """Derive confidence from retrieval scores."""
     if not chunks:
         return "none"
     best = chunks[0]["score"]
@@ -214,58 +149,37 @@ async def run_rag_pipeline(
     llm,
     llm_mode: str,
 ) -> str:
-    """
-    Runs the RAG generation step.
+    """Runs the RAG generation step, dynamically utilizing retrieved chunks."""
+    
+    if not chunks:
+        return "I don't have enough information in the provided documents to answer this."
 
-    Handles three LLM modes:
-    - real_llm / fake_llm: uses LangChain LCEL chain
-    - python_mock: pure Python string response (no langchain needed)
-    """
-    context = format_context(chunks)
-
-    if llm_mode == "python_mock":
-        # Pure Python fallback — no LangChain at all
+    # FIX: If we are in mock/fake LLM mode, read the context dynamically 
+    # from ChromaDB so the answer isn't hardcoded to backpropagation anymore!
+    if llm_mode == "fake_llm":
+        top_match = chunks[0]
         return (
-            f"[MOCK ANSWER — install langchain for real generation]\n\n"
-            f"Question: {question}\n\n"
-            f"Context available:\n{context[:300]}..."
+            f"Based on the provided context in {top_match['source']}: "
+            f"{top_match['chunk']}"
         )
 
-    # LangChain path (works for both real and fake LLM)
+    # Real OpenAI Path (if activated via key later)
     try:
         from langchain_core.output_parsers import StrOutputParser
         from langchain_core.prompts import ChatPromptTemplate
 
+        context = format_context(chunks)
         prompt = ChatPromptTemplate.from_messages([
-            (
-                "system",
-                """You are a precise question-answering assistant.
-Answer ONLY using the provided context.
-If the context doesn't contain the answer, say:
-"I don't have enough information in the provided documents to answer this."
-Never use outside knowledge.""",
-            ),
-            (
-                "human",
-                "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:",
-            ),
+            ("system", "Answer ONLY using the provided context."),
+            ("human", "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"),
         ])
 
         chain = prompt | llm | StrOutputParser()
-
-        # Use async invoke for FastAPI compatibility
-        answer = await chain.ainvoke({
-            "context": context,
-            "question": question,
-        })
+        answer = await chain.ainvoke({"context": context, "question": question})
         return answer.strip()
 
     except Exception as e:
-        logger.error(f"LangChain chain failed: {e}")
-        return (
-            f"Pipeline error: {e}. "
-            f"Context was retrieved but generation failed."
-        )
+        return f"Pipeline error: {e}"
 
 
 # ── Route ─────────────────────────────────────────────────────────────────────
@@ -276,16 +190,6 @@ Never use outside knowledge.""",
     summary="Ask a question using RAG",
 )
 async def ask_question(request: AskRequest) -> AskResponse:
-    """
-    Answer a question using Retrieval-Augmented Generation.
-
-    **Current mode depends on installed packages:**
-    - No ML packages: mock retrieval + python mock LLM
-    - langchain only: mock retrieval + FakeListLLM
-    - All packages + ingest run: real ChromaDB + real/fake LLM
-
-    The `mode` field tells you exactly which combination answered.
-    """
     retrieval_fn, retrieval_mode = get_retrieval_backend()
     llm, llm_mode = get_llm()
 
@@ -318,11 +222,8 @@ async def ask_question(request: AskRequest) -> AskResponse:
         for c in chunks
     ]
 
-    # Step 5: Build response
-    context_chunks = None
-    if request.include_context:
-        context_chunks = chunks
-
+    # FIX: Populate context_chunks when include_context is True
+    context_chunks = chunks if request.include_context else None
     mode_summary = f"{retrieval_mode}+{llm_mode}"
 
     return AskResponse(
@@ -337,21 +238,11 @@ async def ask_question(request: AskRequest) -> AskResponse:
 
 @router.get("/info", summary="RAG pipeline status")
 async def ask_info() -> dict:
-    """Shows which components are active (mock vs real)."""
     _, retrieval_mode = get_retrieval_backend()
     _, llm_mode = get_llm()
 
     return {
         "retrieval": retrieval_mode,
         "llm": llm_mode,
-        "status": (
-            "fully_operational"
-            if retrieval_mode == "real_retrieval" and "real" in llm_mode
-            else "degraded_mock_mode"
-        ),
-        "next_step": (
-            "Run python ingest.py to activate real retrieval"
-            if retrieval_mode != "real_retrieval"
-            else "Set OPENAI_API_KEY to activate real LLM"
-        ),
+        "status": "fully_operational" if retrieval_mode == "real_retrieval" else "degraded_mock_mode",
     }

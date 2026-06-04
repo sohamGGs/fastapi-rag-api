@@ -1,0 +1,1 @@
+Gradient descent is an optimization algorithm used to minimize a model's loss function during training. It works by iteratively calculating the gradients of the error with respect to the model parameters and moving in the opposite direction of the steepest ascent. This step-by-step adjustment allows neural networks to converge toward optimal weights and improve accuracy.

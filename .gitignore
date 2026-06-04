@@ -1,9 +1,24 @@
+# Virtual Environment
+venv/
+.venv/
+ENV/
+env/
+
+# Local Database / Ingested Data
+data/chroma_db/
+chromadb/
+
+# Environment Variables & Secrets
 .env
 *.env
 
-
-venv/
+# Python caching
 __pycache__/
 *.pyc
-logs/
-*.log
+*.pyo
+*.pyd
+.pytest_cache/
+
+# IDE files
+.vscode/
+.idea/

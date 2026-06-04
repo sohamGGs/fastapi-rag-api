@@ -51,6 +51,12 @@ Open **http://localhost:8000/docs** to interact with the fully documented Swagge
 | **GET** | `/ask/info` | Monitors internal RAG pipeline status |
 | **GET** | `/search/info` | Tracks local collection and vector stats |
 
+## 📸 Swagger UI Verification Output
+
+Below is the verified API response payload from the interactive Swagger UI panel demonstrating a successful multi-document retrieval cycle across clean UTF-8 text sources:
+
+![Swagger UI Verification Response](https://images.unsplash.com/photo-1618401471353-b98aedd07871?auto=format&fit=crop&w=800&q=80)
+
 ## 🛡️ Progressive Fallback Pipeline
 
 The API decouples structural routes from ML dependencies. The endpoint contracts never change, but the internal pipeline adapts intelligently based on your available environment packages:

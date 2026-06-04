@@ -27,14 +27,12 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=3, max_length=1000)
     top_k: int = Field(default=3, ge=1, le=10)
     source_filter: Optional[str] = Field(default=None)
-    include_context: bool = Field(default=False)
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "question": "How does backpropagation work?",
                 "top_k": 3,
-                "include_context": False,
             }
         }
     }
@@ -53,7 +51,6 @@ class AskResponse(BaseModel):
     sources: list[CitationItem]
     confidence: Literal["high", "medium", "low", "none"]
     mode: str  # "mock" or "real"
-    context_chunks: Optional[list[dict]] = None
 
 
 # ── LLM Builder ───────────────────────────────────────────────────────────────
@@ -154,7 +151,7 @@ async def run_rag_pipeline(
     if not chunks:
         return "I don't have enough information in the provided documents to answer this."
 
-    # FIX: If we are in mock/fake LLM mode, read the context dynamically 
+    # If we are in mock/fake LLM mode, read the context dynamically 
     # from ChromaDB so the answer isn't hardcoded to backpropagation anymore!
     if llm_mode == "fake_llm":
         top_match = chunks[0]
@@ -222,8 +219,6 @@ async def ask_question(request: AskRequest) -> AskResponse:
         for c in chunks
     ]
 
-    # FIX: Populate context_chunks when include_context is True
-    context_chunks = chunks if request.include_context else None
     mode_summary = f"{retrieval_mode}+{llm_mode}"
 
     return AskResponse(
@@ -232,7 +227,6 @@ async def ask_question(request: AskRequest) -> AskResponse:
         sources=citations,
         confidence=confidence,
         mode=mode_summary,
-        context_chunks=context_chunks,
     )
 
 

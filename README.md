@@ -1,53 +1,44 @@
-# FastAPI RAG API 🚀
+# FastAPI RAG API
 
-A production-grade REST API and RAG (Retrieval-Augmented Generation) system 
-built with FastAPI, LangChain, and ChromaDB.
+Ask natural language questions. Get answers grounded in your documents.
 
-Built as a 7-day structured learning project.
+## Quick Start
 
-## Tech Stack
-- **FastAPI** – Modern, high-performance web framework
-- **Pydantic** – Data validation and settings management
-- **Uvicorn** – ASGI server
-- *(Coming soon)* LangChain, ChromaDB, OpenAI
-
-## Getting Started
-
-### Prerequisites
-- Python 3.11+
-
-### Installation
 ```bash
-git clone https://github.com/sohamGGs/fastapi-rag-api.git
-cd fastapi-rag-api
-python -m venv venv
-Windows: venv\Scripts\activate
 pip install -r requirements.txt
+python ingest.py          # populate ChromaDB from data/*.txt
+uvicorn main:app --reload # start the API
 ```
 
-### Running the API
-```bash
-uvicorn main:app --reload
-```
+Open http://localhost:8000/docs
 
-Open http://127.0.0.1:8000/docs for interactive API documentation.
+## Endpoints
 
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
+| Method | Path | Description |
+|--------|------|-------------|
 | GET | `/ping` | Health check |
-| GET | `/items/` | List all items (with filters) |
-| GET | `/items/{id}` | Get item by ID |
-| POST | `/items/` | Create new item |
-| PUT | `/items/{id}` | Update item |
-| DELETE | `/items/{id}` | Delete item |
+| POST | `/ask/` | RAG question answering |
+| POST | `/search/` | Raw semantic search |
+| GET | `/ask/info` | Pipeline status |
+| GET | `/search/info` | Collection stats |
 
-## Day-by-Day Progress
-- [x] Day 1 – FastAPI Foundations, CRUD, Pydantic Models
-- [ ] Day 2 – Project Structure, Dependencies, Database Layer
-- [ ] Day 3 – Authentication & Middleware
-- [ ] Day 4 – LangChain & Embeddings
-- [ ] Day 5 – ChromaDB & Vector Search
-- [ ] Day 6 – RAG Pipeline
-- [ ] Day 7 – Deployment
+## Progressive Fallback
+
+The app runs at every stage of installation:
+
+| Packages installed | Mode |
+|-------------------|------|
+| fastapi only | Mock retrieval + Python mock LLM |
+| + langchain | Mock retrieval + FakeListLLM |
+| + chromadb + ingest run | Real retrieval + FakeListLLM |
+| + sentence-transformers | Real retrieval + real embeddings |
+| + OPENAI_API_KEY | Fully operational |
+
+Check `GET /ask/info` to see which mode is active.
+
+## Stack
+
+- **FastAPI** — async web framework
+- **LangChain LCEL** — prompt chaining
+- **ChromaDB** — vector storage
+- **all-MiniLM-L6-v2** — sentence embeddings

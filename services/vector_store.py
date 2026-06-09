@@ -130,20 +130,34 @@ def get_embedder():
 
 def get_chroma_client():
     """
-    Returns a persistent ChromaDB client.
-    Raises ImportError clearly if chromadb isn't installed yet.
+    Returns a ChromaDB client.
+    Uses HttpClient if inside Docker, else PersistentClient for local dev.
     """
     try:
         import chromadb
+        import os
         from chromadb.config import Settings as ChromaSettings
 
-        persist_path = Path(CHROMA_PERSIST_DIR)
-        persist_path.mkdir(parents=True, exist_ok=True)
+        chroma_host = os.getenv("CHROMA_HOST")
+        chroma_port = os.getenv("CHROMA_PORT", "8000")
 
-        client = chromadb.PersistentClient(
-            path=str(persist_path),
-            settings=ChromaSettings(anonymized_telemetry=False),
-        )
+        if chroma_host:
+            # Running inside Docker Compose - connect to the Chroma service
+            logger.info(f"Connecting to remote ChromaDB at {chroma_host}:{chroma_port}")
+            client = chromadb.HttpClient(
+                host=chroma_host,
+                port=int(chroma_port),
+                settings=ChromaSettings(anonymized_telemetry=False)
+            )
+        else:
+            # Local development fallback
+            logger.info("Using local PersistentClient")
+            persist_path = Path(CHROMA_PERSIST_DIR)
+            persist_path.mkdir(parents=True, exist_ok=True)
+            client = chromadb.PersistentClient(
+                path=str(persist_path),
+                settings=ChromaSettings(anonymized_telemetry=False),
+            )
         return client
     except ImportError:
         raise ImportError(

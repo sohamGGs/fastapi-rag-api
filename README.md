@@ -8,7 +8,7 @@ This project features a robust production-grade architecture, complete with a pr
 
 This application is containerized and deployed on an **AWS EC2 (Free Tier)** cloud instance using a multi-container **Docker Compose** layout.
 
-* **🔗 Live Interactive Demo:** http://3.109.123.151:8000/docs
+* **🔗 Live Interactive Demo:** http://3.109.123.151:8000/docs*(⏸️ Currently stopped to preserve Free Tier compute hours)*
 * **Cloud Infrastructure:** AWS EC2 Virtual Machine Architecture (`t3.micro` in ap-south-1)
 * **Container Layer:** Docker Engine + Docker Compose Virtualization
 

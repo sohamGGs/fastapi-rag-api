@@ -7,6 +7,8 @@ Registers routers, configures middleware, defines health check.
 No ML imports here — this file should always start cleanly
 regardless of which packages are installed.
 """
+from dotenv import load_dotenv
+load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

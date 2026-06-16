@@ -10,11 +10,13 @@ The public API contract (request/response shape) never changes.
 Only the internal pipeline evolves.
 """
 
+
 import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
+from langsmith import traceable
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +142,9 @@ def calculate_confidence(chunks: list[dict]) -> str:
     return "none"
 
 
+
+
+@traceable(name="rag_generation_pipeline")
 async def run_rag_pipeline(
     question: str,
     chunks: list[dict],

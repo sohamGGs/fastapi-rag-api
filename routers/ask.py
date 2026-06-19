@@ -61,13 +61,14 @@ def get_llm():
     """
     Returns the best available LLM.
 
-    Tries real ChatOpenAI first (needs OPENAI_API_KEY).
-    Falls back to FakeListLLM which needs only langchain-community.
-    Falls back further to a pure Python mock if langchain isn't installed.
+    Tries real ChatOpenAI first.
+    Falls back to ChatGroq (free tier).
+    Falls back further to fake pipeline mode if no keys are found.
     """
-    # Try real OpenAI
+    import os
+
+    # 1. Try real OpenAI
     try:
-        import os
         api_key = os.getenv("OPENAI_API_KEY", "")
         if api_key and not api_key.startswith("sk-your"):
             from langchain_openai import ChatOpenAI
@@ -81,7 +82,22 @@ def get_llm():
     except Exception as e:
         logger.warning(f"ChatOpenAI unavailable: {e}")
 
-    # Fallback to Mock mode
+    # 2. Try real Groq (Our Free Tier Savior)
+    try:
+        groq_key = os.getenv("GROQ_API_KEY", "")
+        if groq_key and not groq_key.startswith("gsk_your"):
+            from langchain_groq import ChatGroq
+            llm = ChatGroq(
+                groq_api_key=groq_key,
+                model_name=os.getenv("GROQ_MODEL", "llama-3.3-70b-specdec"),
+                temperature=float(os.getenv("RAG_TEMPERATURE", "0.1")),
+            )
+            logger.info("LLM: ChatGroq (real)")
+            return llm, "real_llm"  # Returns "real_llm" to trigger the LangChain chain run!
+    except Exception as e:
+        logger.warning(f"ChatGroq unavailable: {e}")
+
+    # 3. Fallback to Mock mode
     logger.info("LLM: Mock Pipeline Mode")
     return None, "fake_llm"
 

@@ -8,6 +8,10 @@ env/
 data/chroma_db/
 chromadb/
 
+# MLflow tracking data
+mlflow.db
+mlruns/
+
 # Environment Variables & Secrets
 .env
 *.env

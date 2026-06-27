@@ -1,26 +1,25 @@
 """
 routers/ask.py
 ==============
-RAG ask endpoint.
-
-Phase 1: FakeListLLM + hardcoded context (works right now).
-Phase 3: Real ChromaDB retrieval + real or fake LLM.
-
-The public API contract (request/response shape) never changes.
-Only the internal pipeline evolves.
+RAG ask endpoint with dual observability (LangSmith + MLflow).
 """
 
-
 import logging
+import os
 from typing import Literal, Optional
 
+import mlflow
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
 from langsmith import traceable
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ask", tags=["RAG — Ask"])
+
+# Initialize MLflow configuration properties
+mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5000"))
+mlflow.set_experiment(os.getenv("MLFLOW_EXPERIMENT_NAME", "RAG_Pipeline_Analytics"))
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -52,7 +51,7 @@ class AskResponse(BaseModel):
     answer: str
     sources: list[CitationItem]
     confidence: Literal["high", "medium", "low", "none"]
-    mode: str  # "mock" or "real"
+    mode: str
 
 
 # ── LLM Builder ───────────────────────────────────────────────────────────────
@@ -60,13 +59,8 @@ class AskResponse(BaseModel):
 def get_llm():
     """
     Returns the best available LLM.
-
-    Tries real ChatOpenAI first.
-    Falls back to ChatGroq (free tier).
-    Falls back further to fake pipeline mode if no keys are found.
+    Tries real ChatOpenAI first, falls back to ChatGroq, then to fake mode.
     """
-    import os
-
     # 1. Try real OpenAI
     try:
         api_key = os.getenv("OPENAI_API_KEY", "")
@@ -82,18 +76,18 @@ def get_llm():
     except Exception as e:
         logger.warning(f"ChatOpenAI unavailable: {e}")
 
-    # 2. Try real Groq (Our Free Tier Savior)
+    # 2. Try real Groq (Free Tier production fallback)
     try:
         groq_key = os.getenv("GROQ_API_KEY", "")
         if groq_key and not groq_key.startswith("gsk_your"):
             from langchain_groq import ChatGroq
             llm = ChatGroq(
                 groq_api_key=groq_key,
-                model_name=os.getenv("GROQ_MODEL", "llama-3.3-70b-specdec"),
+                model_name=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
                 temperature=float(os.getenv("RAG_TEMPERATURE", "0.1")),
             )
             logger.info("LLM: ChatGroq (real)")
-            return llm, "real_llm"  # Returns "real_llm" to trigger the LangChain chain run!
+            return llm, "real_llm"
     except Exception as e:
         logger.warning(f"ChatGroq unavailable: {e}")
 
@@ -103,10 +97,7 @@ def get_llm():
 
 
 def get_retrieval_backend():
-    """
-    Returns the best available retrieval function.
-    Same progressive fallback pattern as search.py.
-    """
+    """Returns the best available retrieval function."""
     try:
         from services.vector_store import search as real_search
         logger.info("Retrieval: ChromaDB (real)")
@@ -116,11 +107,7 @@ def get_retrieval_backend():
         return hardcoded_retrieval, "mock_retrieval"
 
 
-def hardcoded_retrieval(
-    query: str,
-    top_k: int = 3,
-    source_filter=None,
-) -> list[dict]:
+def hardcoded_retrieval(query: str, top_k: int = 3, source_filter=None) -> list[dict]:
     return [
         {
             "chunk": "Backpropagation is the algorithm used to train neural networks.",
@@ -131,7 +118,7 @@ def hardcoded_retrieval(
     ][:top_k]
 
 
-# ── RAG Pipeline ──────────────────────────────────────────────────────────────
+# ── RAG Pipeline Helpers ──────────────────────────────────────────────────────
 
 def format_context(chunks: list[dict]) -> str:
     parts = []
@@ -158,30 +145,16 @@ def calculate_confidence(chunks: list[dict]) -> str:
     return "none"
 
 
-
-
 @traceable(name="rag_generation_pipeline")
-async def run_rag_pipeline(
-    question: str,
-    chunks: list[dict],
-    llm,
-    llm_mode: str,
-) -> str:
+async def run_rag_pipeline(question: str, chunks: list[dict], llm, llm_mode: str) -> str:
     """Runs the RAG generation step, dynamically utilizing retrieved chunks."""
-    
     if not chunks:
         return "I don't have enough information in the provided documents to answer this."
 
-    # If we are in mock/fake LLM mode, read the context dynamically 
-    # from ChromaDB so the answer isn't hardcoded to backpropagation anymore!
     if llm_mode == "fake_llm":
         top_match = chunks[0]
-        return (
-            f"Based on the provided context in {top_match['source']}: "
-            f"{top_match['chunk']}"
-        )
+        return f"Based on the provided context in {top_match['source']}: {top_match['chunk']}"
 
-    # Real OpenAI Path (if activated via key later)
     try:
         from langchain_core.output_parsers import StrOutputParser
         from langchain_core.prompts import ChatPromptTemplate
@@ -200,55 +173,78 @@ async def run_rag_pipeline(
         return f"Pipeline error: {e}"
 
 
-# ── Route ─────────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
 
-@router.post(
-    "/",
-    response_model=AskResponse,
-    summary="Ask a question using RAG",
-)
+@router.post("/", response_model=AskResponse, summary="Ask a question using RAG")
 async def ask_question(request: AskRequest) -> AskResponse:
-    retrieval_fn, retrieval_mode = get_retrieval_backend()
-    llm, llm_mode = get_llm()
+    # Initialize MLflow Run transaction tracking
+    with mlflow.start_run(run_name=f"query_{request.question[:15]}"):
+        
+        # Log incoming parameters to MLflow
+        mlflow.log_param("question", request.question)
+        mlflow.log_param("top_k", request.top_k)
+        
+        try:
+            retrieval_fn, retrieval_mode = get_retrieval_backend()
+            llm, llm_mode = get_llm()
 
-    # Step 1: Retrieve context
-    chunks = retrieval_fn(
-        query=request.question,
-        top_k=request.top_k,
-        source_filter=request.source_filter,
-    )
+            # Step 1: Retrieve context chunks
+            chunks = retrieval_fn(
+                query=request.question,
+                top_k=request.top_k,
+                source_filter=request.source_filter,
+            )
 
-    # Step 2: Calculate confidence
-    confidence = calculate_confidence(chunks)
+            # Step 2: Calculate operational metrics
+            confidence = calculate_confidence(chunks)
+            mode_summary = f"{retrieval_mode}+{llm_mode}"
 
-    # Step 3: Generate answer
-    answer = await run_rag_pipeline(
-        question=request.question,
-        chunks=chunks,
-        llm=llm,
-        llm_mode=llm_mode,
-    )
+            # Step 3: Run tracing pipeline generation
+            answer = await run_rag_pipeline(
+                question=request.question,
+                chunks=chunks,
+                llm=llm,
+                llm_mode=llm_mode,
+            )
 
-    # Step 4: Build citations
-    citations = [
-        CitationItem(
-            source=c["source"],
-            chunk_index=c["chunk_index"],
-            score=c["score"],
-            preview=c["chunk"][:150] + "..." if len(c["chunk"]) > 150 else c["chunk"],
-        )
-        for c in chunks
-    ]
+            # Step 4: Construct response citation schemas
+            citations = [
+                CitationItem(
+                    source=c["source"],
+                    chunk_index=c["chunk_index"],
+                    score=c["score"],
+                    preview=c["chunk"][:150] + "..." if len(c["chunk"]) > 150 else c["chunk"],
+                )
+                for c in chunks
+            ]
 
-    mode_summary = f"{retrieval_mode}+{llm_mode}"
+            # --- Log Dynamic Metrics to MLflow Dashboard ---
+            mlflow.log_param("pipeline_mode", mode_summary)
+            mlflow.log_param("pipeline_status", "success")
+            
+            if chunks:
+                scores = [c["score"] for c in chunks]
+                mlflow.log_metric("highest_retrieval_score", max(scores))
+                mlflow.log_metric("avg_retrieval_score", sum(scores) / len(chunks))
+            
+            confidence_map = {"none": 0.0, "low": 1.0, "medium": 2.0, "high": 3.0}
+            mlflow.log_metric("pipeline_confidence_level", confidence_map.get(confidence, 0.0))
 
-    return AskResponse(
-        question=request.question,
-        answer=answer,
-        sources=citations,
-        confidence=confidence,
-        mode=mode_summary,
-    )
+            return AskResponse(
+                question=request.question,
+                answer=answer,
+                sources=citations,
+                confidence=confidence,
+                mode=mode_summary,
+            )
+
+        except Exception as e:
+            mlflow.log_param("pipeline_status", "failed")
+            mlflow.log_param("error_message", str(e))
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Pipeline error: {str(e)}"
+            )
 
 
 @router.get("/info", summary="RAG pipeline status")
